@@ -5,7 +5,33 @@ export type SessionEventName =
   | "rewarded_ad_offer_shown"
   | "rewarded_ad_attempt"
   | "rewarded_ad_completed"
-  | "rewarded_ad_failed";
+  | "rewarded_ad_failed"
+  | "mission_claimed"
+  | "weapon_unlocked"
+  | "meta_upgrade_purchased";
+
+export type WeaponId = "pulse" | "scatter" | "lance";
+
+export interface DailyMissionProgress {
+  kills: number;
+  survivalSeconds: number;
+  matches: number;
+}
+
+export interface MetaUpgradeLevels {
+  armor: number;
+  agility: number;
+  reactor: number;
+}
+
+export interface LeaderboardEntry {
+  score: number;
+  survivalSeconds: number;
+  kills: number;
+  hero: string;
+  weapon: WeaponId;
+  at: number;
+}
 
 export interface SessionEvent {
   name: SessionEventName;
@@ -28,11 +54,21 @@ export interface PlayerProfile {
   rewardedDay: string;
   rewardedLastClaimAt: number;
   rewardedLifetimeClaims: number;
+  selectedWeapon: WeaponId;
+  unlockedWeapons: WeaponId[];
+  metaUpgrades: MetaUpgradeLevels;
+  dailyMissionDay: string;
+  dailyMissionProgress: DailyMissionProgress;
+  dailyMissionClaimed: string[];
+  leaderboard: LeaderboardEntry[];
+  tutorialSeen: boolean;
   eventLog: SessionEvent[];
 }
 
 export const PROFILE_STORAGE_KEY = "stickparty.profile.v1";
 const MAX_EVENT_LOG = 120;
+const MAX_LEADERBOARD_ROWS = 15;
+const WEAPON_IDS: WeaponId[] = ["pulse", "scatter", "lance"];
 
 function safeInteger(value: unknown, fallback = 0): number {
   const parsed = typeof value === "number" ? value : Number(value);
@@ -50,6 +86,91 @@ function safeText(value: unknown, fallback: string): string {
 
   const cleaned = value.trim().slice(0, 24);
   return cleaned.length > 0 ? cleaned : fallback;
+}
+
+function safeBoolean(value: unknown, fallback = false): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  return fallback;
+}
+
+function normalizeWeaponId(value: unknown, fallback: WeaponId): WeaponId {
+  if (typeof value === "string" && WEAPON_IDS.includes(value as WeaponId)) {
+    return value as WeaponId;
+  }
+
+  return fallback;
+}
+
+function normalizeWeaponList(value: unknown): WeaponId[] {
+  if (!Array.isArray(value)) {
+    return ["pulse"];
+  }
+
+  const picked = value
+    .filter((entry): entry is string => typeof entry === "string")
+    .filter((entry): entry is WeaponId => WEAPON_IDS.includes(entry as WeaponId));
+
+  const unique = Array.from(new Set(picked));
+  if (!unique.includes("pulse")) {
+    unique.unshift("pulse");
+  }
+  return unique;
+}
+
+function normalizeMetaUpgrades(value: unknown): MetaUpgradeLevels {
+  const candidate = value && typeof value === "object" ? (value as Partial<MetaUpgradeLevels>) : {};
+  return {
+    armor: Math.min(7, safeInteger(candidate.armor)),
+    agility: Math.min(7, safeInteger(candidate.agility)),
+    reactor: Math.min(7, safeInteger(candidate.reactor)),
+  };
+}
+
+function normalizeMissionProgress(value: unknown): DailyMissionProgress {
+  const candidate = value && typeof value === "object" ? (value as Partial<DailyMissionProgress>) : {};
+  return {
+    kills: safeInteger(candidate.kills),
+    survivalSeconds: safeInteger(candidate.survivalSeconds),
+    matches: safeInteger(candidate.matches),
+  };
+}
+
+function normalizeMissionClaimed(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      value
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0)
+        .slice(0, 32),
+    ),
+  );
+}
+
+function clampLeaderboard(value: unknown): LeaderboardEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((entry): entry is Partial<LeaderboardEntry> => Boolean(entry && typeof entry === "object"))
+    .map((entry) => ({
+      score: safeInteger(entry.score),
+      survivalSeconds: safeInteger(entry.survivalSeconds),
+      kills: safeInteger(entry.kills),
+      hero: safeText(entry.hero, "Unknown"),
+      weapon: normalizeWeaponId(entry.weapon, "pulse"),
+      at: safeInteger(entry.at),
+    }))
+    .sort((a, b) => b.score - a.score || b.survivalSeconds - a.survivalSeconds)
+    .slice(0, MAX_LEADERBOARD_ROWS);
 }
 
 function clampEventList(value: unknown): SessionEvent[] {
@@ -108,21 +229,52 @@ export function createDefaultProfile(now = Date.now()): PlayerProfile {
     rewardedDay: today,
     rewardedLastClaimAt: 0,
     rewardedLifetimeClaims: 0,
+    selectedWeapon: "pulse",
+    unlockedWeapons: ["pulse"],
+    metaUpgrades: {
+      armor: 0,
+      agility: 0,
+      reactor: 0,
+    },
+    dailyMissionDay: today,
+    dailyMissionProgress: {
+      kills: 0,
+      survivalSeconds: 0,
+      matches: 0,
+    },
+    dailyMissionClaimed: [],
+    leaderboard: [],
+    tutorialSeen: false,
     eventLog: [],
   };
 }
 
 export function refreshDailyCounters(profile: PlayerProfile, now = Date.now()): PlayerProfile {
   const today = localDayKey(now);
-  if (profile.rewardedDay === today) {
-    return profile;
+  let next = profile;
+
+  if (next.rewardedDay !== today) {
+    next = {
+      ...next,
+      rewardedDay: today,
+      rewardedClaimsToday: 0,
+    };
   }
 
-  return {
-    ...profile,
-    rewardedDay: today,
-    rewardedClaimsToday: 0,
-  };
+  if (next.dailyMissionDay !== today) {
+    next = {
+      ...next,
+      dailyMissionDay: today,
+      dailyMissionProgress: {
+        kills: 0,
+        survivalSeconds: 0,
+        matches: 0,
+      },
+      dailyMissionClaimed: [],
+    };
+  }
+
+  return next;
 }
 
 export function normalizeProfile(candidate: unknown, now = Date.now()): PlayerProfile {
@@ -132,6 +284,8 @@ export function normalizeProfile(candidate: unknown, now = Date.now()): PlayerPr
   }
 
   const draft = candidate as Partial<PlayerProfile>;
+  const unlockedWeapons = normalizeWeaponList(draft.unlockedWeapons);
+  const selectedWeapon = normalizeWeaponId(draft.selectedWeapon, base.selectedWeapon);
   const normalized: PlayerProfile = {
     ...base,
     id: safeText(draft.id, base.id),
@@ -148,6 +302,14 @@ export function normalizeProfile(candidate: unknown, now = Date.now()): PlayerPr
     rewardedDay: safeText(draft.rewardedDay, base.rewardedDay),
     rewardedLastClaimAt: safeInteger(draft.rewardedLastClaimAt),
     rewardedLifetimeClaims: safeInteger(draft.rewardedLifetimeClaims),
+    selectedWeapon: unlockedWeapons.includes(selectedWeapon) ? selectedWeapon : unlockedWeapons[0] ?? "pulse",
+    unlockedWeapons,
+    metaUpgrades: normalizeMetaUpgrades(draft.metaUpgrades),
+    dailyMissionDay: safeText(draft.dailyMissionDay, base.dailyMissionDay),
+    dailyMissionProgress: normalizeMissionProgress(draft.dailyMissionProgress),
+    dailyMissionClaimed: normalizeMissionClaimed(draft.dailyMissionClaimed),
+    leaderboard: clampLeaderboard(draft.leaderboard),
+    tutorialSeen: safeBoolean(draft.tutorialSeen),
     eventLog: clampEventList(draft.eventLog),
   };
 
@@ -182,6 +344,7 @@ export function saveProfile(profile: PlayerProfile): PlayerProfile {
   const next = {
     ...profile,
     updatedAt: Date.now(),
+    leaderboard: profile.leaderboard.slice(0, MAX_LEADERBOARD_ROWS),
     eventLog: profile.eventLog.slice(-MAX_EVENT_LOG),
   };
 

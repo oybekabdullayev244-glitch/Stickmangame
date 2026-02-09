@@ -1,6 +1,17 @@
 const UPDATE_NOTES = [
   {
     date: "2026-02-09",
+    title: "Depth & Retention Update",
+    details: [
+      "Added weapon loadouts with unlock costs: Pulse Blaster, Scatter Shot, and Lance Cannon.",
+      "Added permanent meta upgrades (armor, agility, reactor) purchased with in-game currencies.",
+      "Added daily missions with manual claim flow and local persistent leaderboard.",
+      "Added first-session tutorial card, off-screen enemy indicators, and stronger hit/death feedback.",
+      "Expanded run tracking so missions and leaderboard update automatically after each match.",
+    ],
+  },
+  {
+    date: "2026-02-09",
     title: "Arena Combat Update",
     details: [
       "Reworked gameplay from pure dodging to combat survival with auto-fire projectiles.",

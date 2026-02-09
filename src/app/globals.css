@@ -315,6 +315,12 @@ body {
   background: rgba(44, 28, 8, 0.66);
 }
 
+.weapon-pill {
+  border-color: rgba(116, 245, 255, 0.45);
+  color: #d6fbff;
+  background: rgba(7, 30, 38, 0.7);
+}
+
 .game-stats-banner {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -458,6 +464,21 @@ body {
   color: var(--ink-1);
 }
 
+.tutorial-box {
+  border: 1px solid rgba(246, 163, 19, 0.42);
+  background: rgba(34, 26, 9, 0.58);
+  border-radius: 12px;
+  padding: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
+.tutorial-box p {
+  margin: 0;
+}
+
 .hero-picker {
   margin-top: 0.7rem;
   display: grid;
@@ -504,6 +525,58 @@ body {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #9dc3ff;
+}
+
+.weapon-picker {
+  margin-top: 0.62rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 0.52rem;
+}
+
+.weapon-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(8, 18, 30, 0.84);
+  color: var(--ink-0);
+  text-align: left;
+  padding: 0.58rem;
+  min-height: 118px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.weapon-card strong {
+  font-size: 0.98rem;
+}
+
+.weapon-card small {
+  color: var(--ink-2);
+  line-height: 1.35;
+}
+
+.weapon-card span {
+  margin-top: auto;
+  font-size: 0.76rem;
+  color: #9bc8ff;
+}
+
+.weapon-card:hover {
+  border-color: rgba(138, 163, 200, 0.56);
+  transform: translateY(-1px);
+}
+
+.weapon-card.active {
+  border-color: rgba(75, 217, 168, 0.64);
+  background: rgba(13, 35, 30, 0.88);
+}
+
+.weapon-card.locked {
+  border-style: dashed;
+  opacity: 0.9;
 }
 
 .overlay-card.results h3 {
@@ -626,6 +699,45 @@ body {
   margin-bottom: 0.5rem;
 }
 
+.meta-upgrade-grid {
+  margin-top: 0.6rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.5rem;
+}
+
+.meta-upgrade-btn {
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: rgba(10, 20, 33, 0.86);
+  color: var(--ink-0);
+  text-align: left;
+  padding: 0.56rem;
+  min-height: 108px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+
+.meta-upgrade-btn:hover {
+  border-color: rgba(246, 163, 19, 0.48);
+}
+
+.meta-upgrade-btn small {
+  color: var(--ink-2);
+}
+
+.meta-upgrade-btn span {
+  font-size: 0.78rem;
+  color: #aed0ff;
+}
+
+.meta-upgrade-btn:disabled {
+  opacity: 0.66;
+  cursor: not-allowed;
+}
+
 .nickname-row {
   display: flex;
   gap: 0.45rem;
@@ -670,6 +782,60 @@ body {
   padding: 0.38rem 0.52rem;
   color: var(--ink-1);
   font-size: 0.83rem;
+}
+
+.mission-list,
+.leaderboard-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.mission-row {
+  border: 1px solid rgba(138, 163, 200, 0.24);
+  border-radius: 11px;
+  padding: 0.5rem 0.56rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.55rem;
+  align-items: flex-start;
+  background: rgba(9, 18, 32, 0.64);
+}
+
+.mission-row p {
+  margin: 0.12rem 0;
+}
+
+.mission-row small {
+  color: #a8c3e8;
+  font-size: 0.78rem;
+}
+
+.mission-row.completed {
+  border-color: rgba(75, 217, 168, 0.5);
+}
+
+.mission-row.claimed {
+  opacity: 0.72;
+}
+
+.leaderboard-row {
+  border: 1px solid rgba(138, 163, 200, 0.22);
+  border-radius: 10px;
+  padding: 0.42rem 0.55rem;
+  display: grid;
+  grid-template-columns: 52px 1fr 2fr 70px;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.leaderboard-row small {
+  color: #98b6dd;
+}
+
+.leaderboard-row time {
+  text-align: right;
+  color: #d8e8ff;
 }
 
 .prose-shell h1 {
@@ -780,6 +946,11 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .weapon-picker,
+  .meta-upgrade-grid {
+    grid-template-columns: 1fr;
+  }
+
   .overlay-card {
     width: min(96%, 640px);
     max-height: 95%;
@@ -796,5 +967,14 @@ code {
 
   .event-log-row {
     font-size: 0.78rem;
+  }
+
+  .leaderboard-row {
+    grid-template-columns: 48px 1fr;
+    grid-auto-rows: auto;
+  }
+
+  .leaderboard-row time {
+    text-align: left;
   }
 }

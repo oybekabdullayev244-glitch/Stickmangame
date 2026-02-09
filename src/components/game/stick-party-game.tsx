@@ -13,12 +13,16 @@ import {
 import { formatInt, formatSeconds } from "@/lib/format";
 import {
   appendProfileEvent,
+  type DailyMissionProgress,
+  type LeaderboardEntry,
   loadProfile,
+  type MetaUpgradeLevels,
   refreshDailyCounters,
   saveProfile,
   type PlayerProfile,
   type SessionEvent,
   type SessionEventName,
+  type WeaponId,
 } from "@/lib/profile";
 
 type GamePhase = "home" | "playing" | "game_over";
@@ -51,6 +55,7 @@ interface Projectile {
   ttl: number;
   damage: number;
   radius: number;
+  pierce: number;
 }
 
 interface Orb {
@@ -85,6 +90,7 @@ interface BuildState {
 
 interface RoundState {
   heroId: HeroId;
+  weaponId: WeaponId;
   playerX: number;
   playerY: number;
   playerRadius: number;
@@ -117,6 +123,7 @@ interface RoundState {
   contractProgress: number;
   contractExpireAt: number;
   nextContractAt: number;
+  powerGainScale: number;
   build: BuildState;
   upgrades: UpgradeId[];
 }
@@ -149,6 +156,7 @@ interface PointerState {
 interface LiveStats {
   heroId: HeroId;
   heroName: string;
+  weaponName: string;
   level: number;
   combo: number;
   kills: number;
@@ -178,6 +186,33 @@ interface HeroDefinition {
   extraShield: number;
   dashScale: number;
   color: string;
+}
+
+interface WeaponDefinition {
+  id: WeaponId;
+  name: string;
+  description: string;
+  unlockCredits: number;
+  unlockCrystals: number;
+}
+
+interface MetaUpgradeDefinition {
+  id: keyof MetaUpgradeLevels;
+  title: string;
+  description: string;
+  maxLevel: number;
+  baseCreditCost: number;
+  baseCrystalCost: number;
+}
+
+interface DailyMissionDefinition {
+  id: string;
+  label: string;
+  description: string;
+  metric: keyof DailyMissionProgress;
+  goal: number;
+  rewardCredits: number;
+  rewardCrystals: number;
 }
 
 const UPGRADE_POOL: UpgradeDefinition[] = [
@@ -240,6 +275,87 @@ const HERO_POOL: HeroDefinition[] = [
   },
 ];
 
+const WEAPON_POOL: WeaponDefinition[] = [
+  {
+    id: "pulse",
+    name: "Pulse Blaster",
+    description: "Balanced automatic fire with stable accuracy.",
+    unlockCredits: 0,
+    unlockCrystals: 0,
+  },
+  {
+    id: "scatter",
+    name: "Scatter Shot",
+    description: "Wide cone blast that shreds close pressure.",
+    unlockCredits: 320,
+    unlockCrystals: 2,
+  },
+  {
+    id: "lance",
+    name: "Lance Cannon",
+    description: "Heavy piercing shots for elite and brute control.",
+    unlockCredits: 520,
+    unlockCrystals: 4,
+  },
+];
+
+const META_UPGRADES: MetaUpgradeDefinition[] = [
+  {
+    id: "armor",
+    title: "Armor Matrix",
+    description: "Starts each run with extra shield capacity.",
+    maxLevel: 6,
+    baseCreditCost: 190,
+    baseCrystalCost: 1,
+  },
+  {
+    id: "agility",
+    title: "Thruster Core",
+    description: "Run speed up and dash cooldown down.",
+    maxLevel: 6,
+    baseCreditCost: 170,
+    baseCrystalCost: 1,
+  },
+  {
+    id: "reactor",
+    title: "Reactor Tuning",
+    description: "Hero power charges faster every run.",
+    maxLevel: 6,
+    baseCreditCost: 210,
+    baseCrystalCost: 1,
+  },
+];
+
+const DAILY_MISSIONS: DailyMissionDefinition[] = [
+  {
+    id: "daily_kills",
+    label: "Target Sweep",
+    description: "Defeat 120 enemies today.",
+    metric: "kills",
+    goal: 120,
+    rewardCredits: 280,
+    rewardCrystals: 1,
+  },
+  {
+    id: "daily_survival",
+    label: "Long Run",
+    description: "Accumulate 240s survival time today.",
+    metric: "survivalSeconds",
+    goal: 240,
+    rewardCredits: 220,
+    rewardCrystals: 1,
+  },
+  {
+    id: "daily_matches",
+    label: "Arena Habit",
+    description: "Play 5 matches today.",
+    metric: "matches",
+    goal: 5,
+    rewardCredits: 180,
+    rewardCrystals: 1,
+  },
+];
+
 const CANVAS_WIDTH = 960;
 const CANVAS_HEIGHT = 540;
 const PLAYER_SPEED = 242;
@@ -255,6 +371,7 @@ const DASH_MULTIPLIER = 2.8;
 const LIVE_STATS_DEFAULT: LiveStats = {
   heroId: "viper",
   heroName: "Viper",
+  weaponName: "Pulse Blaster",
   level: 1,
   combo: 1,
   kills: 0,
@@ -265,6 +382,12 @@ const LIVE_STATS_DEFAULT: LiveStats = {
   xpToNext: 70,
   upgrades: 0,
   contractLabel: "No contract",
+};
+
+const DEFAULT_META_UPGRADES: MetaUpgradeLevels = {
+  armor: 0,
+  agility: 0,
+  reactor: 0,
 };
 
 type FullscreenDocument = Document & {
@@ -372,25 +495,36 @@ function getHero(heroId: HeroId): HeroDefinition {
   return HERO_POOL.find((hero) => hero.id === heroId) ?? HERO_POOL[0];
 }
 
-function createBaseBuild(heroId: HeroId): BuildState {
+function getWeapon(weaponId: WeaponId): WeaponDefinition {
+  return WEAPON_POOL.find((weapon) => weapon.id === weaponId) ?? WEAPON_POOL[0];
+}
+
+function createBaseBuild(heroId: HeroId, metaUpgrades: MetaUpgradeLevels): BuildState {
   const hero = getHero(heroId);
-  const baseShield = Math.max(1, 1 + hero.extraShield);
+  const baseShield = Math.max(1, 1 + hero.extraShield + metaUpgrades.armor);
+  const agilityBoost = metaUpgrades.agility * 0.065;
+  const dashReduction = Math.min(0.28, metaUpgrades.agility * 0.045);
 
   return {
-    moveSpeed: hero.moveScale,
+    moveSpeed: hero.moveScale + agilityBoost,
     fireInterval: Math.max(0.18, 0.52 / hero.fireScale),
     shotDamage: Math.max(1, 1 + hero.damageBonus),
     multiShot: 1,
-    dashCooldown: 4.8 * hero.dashScale,
+    dashCooldown: Math.max(1.95, 4.8 * hero.dashScale * (1 - dashReduction)),
     pickupRadius: 28,
     maxShield: baseShield,
     shield: baseShield,
   };
 }
 
-function resetRound(heroId: HeroId = "viper"): RoundState {
+function resetRound(
+  heroId: HeroId = "viper",
+  weaponId: WeaponId = "pulse",
+  metaUpgrades: MetaUpgradeLevels = DEFAULT_META_UPGRADES,
+): RoundState {
   return {
     heroId,
+    weaponId,
     playerX: CANVAS_WIDTH / 2,
     playerY: CANVAS_HEIGHT / 2,
     playerRadius: 12,
@@ -423,7 +557,8 @@ function resetRound(heroId: HeroId = "viper"): RoundState {
     contractProgress: 0,
     contractExpireAt: 0,
     nextContractAt: randomInRange(18, 26),
-    build: createBaseBuild(heroId),
+    powerGainScale: 1 + metaUpgrades.reactor * 0.12,
+    build: createBaseBuild(heroId, metaUpgrades),
     upgrades: [],
   };
 }
@@ -441,6 +576,7 @@ function toLiveStats(round: RoundState): LiveStats {
   return {
     heroId: round.heroId,
     heroName: getHero(round.heroId).name,
+    weaponName: getWeapon(round.weaponId).name,
     level: round.level,
     combo: round.combo,
     kills: round.kills,
@@ -562,6 +698,47 @@ function applyUpgrade(round: RoundState, id: UpgradeId): string {
   return def?.title ?? "Upgrade";
 }
 
+function missionProgressValue(
+  progress: DailyMissionProgress,
+  metric: keyof DailyMissionProgress,
+): number {
+  return progress[metric];
+}
+
+function getMetaUpgradeCost(
+  definition: MetaUpgradeDefinition,
+  level: number,
+): { credits: number; crystals: number } {
+  const tier = level + 1;
+  return {
+    credits: Math.floor(definition.baseCreditCost * tier),
+    crystals: Math.max(1, definition.baseCrystalCost + Math.floor(level / 2)),
+  };
+}
+
+function getDefaultMissionProgress(): DailyMissionProgress {
+  return {
+    kills: 0,
+    survivalSeconds: 0,
+    matches: 0,
+  };
+}
+
+function updateLeaderboard(
+  current: LeaderboardEntry[],
+  payload: Omit<LeaderboardEntry, "at">,
+): LeaderboardEntry[] {
+  return [
+    {
+      ...payload,
+      at: Date.now(),
+    },
+    ...current,
+  ]
+    .sort((a, b) => b.score - a.score || b.survivalSeconds - a.survivalSeconds)
+    .slice(0, 10);
+}
+
 function drawArenaBackground(ctx: CanvasRenderingContext2D): void {
   const gradient = ctx.createLinearGradient(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
   gradient.addColorStop(0, "#111d31");
@@ -639,8 +816,8 @@ function drawHud(ctx: CanvasRenderingContext2D, phase: GamePhase, round: RoundSt
 
   ctx.font = "500 12px 'Trebuchet MS', sans-serif";
   ctx.fillStyle = "#9fc2ff";
-  ctx.fillText(`${getHero(round.heroId).name} | Time ${formatSeconds(round.elapsed)} | Kills ${round.kills}`, 32, 62);
-  ctx.fillText(`Level ${round.level} | Combo x${round.combo}`, 32, 80);
+  ctx.fillText(`${getHero(round.heroId).name} | ${getWeapon(round.weaponId).name}`, 32, 62);
+  ctx.fillText(`Time ${formatSeconds(round.elapsed)} | Kills ${round.kills} | Combo x${round.combo}`, 32, 80);
 
   const progress = round.xpToNext > 0 ? clamp(round.xp / round.xpToNext, 0, 1) : 0;
   ctx.fillStyle = "rgba(255,255,255,0.15)";
@@ -718,9 +895,32 @@ function spawnVolley(round: RoundState): void {
     return;
   }
 
+  const weapon = getWeapon(round.weaponId);
   const direction = normalize(target.x - round.playerX, target.y - round.playerY);
-  const shotCount = Math.max(1, round.build.multiShot);
-  const spreadStep = 0.14;
+  let shotCount = Math.max(1, round.build.multiShot);
+  let spreadStep = 0.14;
+  let speedScale = 1;
+  let ttl = PROJECTILE_TTL;
+  let damageScale = 1;
+  let radius = 3.2;
+  let pierce = 0;
+
+  if (weapon.id === "scatter") {
+    shotCount = Math.max(3, round.build.multiShot + 2);
+    spreadStep = 0.23;
+    speedScale = 0.94;
+    ttl = PROJECTILE_TTL * 0.88;
+    damageScale = 0.72;
+    radius = 3;
+  } else if (weapon.id === "lance") {
+    shotCount = 1;
+    spreadStep = 0;
+    speedScale = 0.86;
+    ttl = PROJECTILE_TTL * 1.45;
+    damageScale = 1.95;
+    radius = 4.5;
+    pierce = 2;
+  }
 
   for (let i = 0; i < shotCount; i += 1) {
     const offset = shotCount === 1 ? 0 : (i - (shotCount - 1) / 2) * spreadStep;
@@ -730,11 +930,12 @@ function spawnVolley(round: RoundState): void {
       id: nextId(),
       x: round.playerX,
       y: round.playerY,
-      vx: rotated.x * PROJECTILE_SPEED,
-      vy: rotated.y * PROJECTILE_SPEED,
-      ttl: PROJECTILE_TTL,
-      damage: round.build.shotDamage,
-      radius: 3.2,
+      vx: rotated.x * PROJECTILE_SPEED * speedScale,
+      vy: rotated.y * PROJECTILE_SPEED * speedScale,
+      ttl,
+      damage: Math.max(1, Math.round(round.build.shotDamage * damageScale)),
+      radius,
+      pierce,
     });
   }
 
@@ -835,6 +1036,36 @@ function drawPickup(ctx: CanvasRenderingContext2D, pickup: Pickup): void {
   ctx.restore();
 }
 
+function drawOffscreenIndicators(ctx: CanvasRenderingContext2D, round: RoundState): void {
+  const centerX = CANVAS_WIDTH / 2;
+  const centerY = CANVAS_HEIGHT / 2;
+  const margin = 26;
+  const maxX = CANVAS_WIDTH - margin;
+  const maxY = CANVAS_HEIGHT - margin;
+
+  for (const enemy of round.enemies) {
+    if (enemy.x >= 0 && enemy.x <= CANVAS_WIDTH && enemy.y >= 0 && enemy.y <= CANVAS_HEIGHT) {
+      continue;
+    }
+
+    const angle = Math.atan2(enemy.y - centerY, enemy.x - centerX);
+    const edgeX = clamp(centerX + Math.cos(angle) * (centerX - margin), margin, maxX);
+    const edgeY = clamp(centerY + Math.sin(angle) * (centerY - margin), margin, maxY);
+
+    ctx.save();
+    ctx.translate(edgeX, edgeY);
+    ctx.rotate(angle + Math.PI / 2);
+    ctx.fillStyle = enemy.elite ? "rgba(195,156,255,0.9)" : "rgba(255,120,120,0.72)";
+    ctx.beginPath();
+    ctx.moveTo(0, -8);
+    ctx.lineTo(7, 6);
+    ctx.lineTo(-7, 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
 export default function StickPartyGame() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const arenaShellRef = useRef<HTMLDivElement | null>(null);
@@ -850,8 +1081,10 @@ export default function StickPartyGame() {
     x: CANVAS_WIDTH / 2,
     y: CANVAS_HEIGHT / 2,
   });
+  const damageFlashRef = useRef(0);
+  const shakeRef = useRef(0);
   const phaseRef = useRef<GamePhase>("home");
-  const roundRef = useRef<RoundState>(resetRound("viper"));
+  const roundRef = useRef<RoundState>(resetRound("viper", "pulse", DEFAULT_META_UPGRADES));
   const profileRef = useRef<PlayerProfile | null>(null);
   const upgradeOpenRef = useRef(false);
 
@@ -868,6 +1101,7 @@ export default function StickPartyGame() {
   const [upgradeChoices, setUpgradeChoices] = useState<UpgradeDefinition[]>([]);
   const [liveStats, setLiveStats] = useState<LiveStats>(LIVE_STATS_DEFAULT);
   const [selectedHero, setSelectedHero] = useState<HeroId>("viper");
+  const [selectedWeapon, setSelectedWeapon] = useState<WeaponId>("pulse");
   const [adState, setAdState] = useState<"idle" | "loading" | "showing">("idle");
   const [adCountdown, setAdCountdown] = useState(AD_DURATION_SECONDS);
   const [nicknameDraft, setNicknameDraft] = useState("");
@@ -959,11 +1193,26 @@ export default function StickPartyGame() {
       const score = Math.floor(finalState.score);
       const survivalSeconds = Math.floor(finalState.elapsed);
       const rewards = calculateMatchReward(score);
+      const heroName = getHero(finalState.heroId).name;
+      const weaponName = getWeapon(finalState.weaponId).name;
 
       let summary: RoundSummary | null = null;
+      let missionReadyCount = 0;
       writeProfile((current) => {
         const normalized = refreshDailyCounters(current);
         const nextBest = Math.max(normalized.bestScore, score);
+        const nextMissionProgress: DailyMissionProgress = {
+          kills: normalized.dailyMissionProgress.kills + finalState.kills,
+          survivalSeconds: normalized.dailyMissionProgress.survivalSeconds + survivalSeconds,
+          matches: normalized.dailyMissionProgress.matches + 1,
+        };
+
+        missionReadyCount = DAILY_MISSIONS.filter(
+          (mission) =>
+            !normalized.dailyMissionClaimed.includes(mission.id) &&
+            missionProgressValue(nextMissionProgress, mission.metric) >= mission.goal,
+        ).length;
+
         let updated: PlayerProfile = {
           ...normalized,
           lastScore: score,
@@ -972,11 +1221,21 @@ export default function StickPartyGame() {
           bestScore: nextBest,
           credits: normalized.credits + rewards.credits,
           crystals: normalized.crystals + rewards.crystals,
+          dailyMissionProgress: nextMissionProgress,
+          leaderboard: updateLeaderboard(normalized.leaderboard, {
+            score,
+            survivalSeconds,
+            kills: finalState.kills,
+            hero: heroName,
+            weapon: finalState.weaponId,
+          }),
         };
 
         updated = recordEvent(updated, "match_end", {
           score,
           survival_seconds: survivalSeconds,
+          hero: heroName,
+          weapon: weaponName,
           enemies_spawned: finalState.spawnedEnemies,
           kills: finalState.kills,
           level: finalState.level,
@@ -1010,7 +1269,13 @@ export default function StickPartyGame() {
 
       closeUpgradeSelection();
       setIsPaused(false);
-      setStatusText("Match rewards applied. Optional bonus available.");
+      if (missionReadyCount > 0) {
+        setStatusText(
+          `Match rewards applied. ${missionReadyCount} daily mission reward(s) ready to claim.`,
+        );
+      } else {
+        setStatusText("Match rewards applied. Optional bonus available.");
+      }
       setPhase("game_over");
       phaseRef.current = "game_over";
       setLiveStats(toLiveStats(finalState));
@@ -1020,24 +1285,43 @@ export default function StickPartyGame() {
 
   const startMatch = useCallback(() => {
     const hero = getHero(selectedHero);
-    const started = writeProfile((current) =>
-      recordEvent(current, "match_start", { source: "menu", hero: hero.name }),
-    );
+    const started = writeProfile((current) => {
+      const normalized = refreshDailyCounters(current);
+      const preferredWeapon = normalized.unlockedWeapons.includes(selectedWeapon)
+        ? selectedWeapon
+        : normalized.selectedWeapon;
+      const safeWeapon = normalized.unlockedWeapons.includes(preferredWeapon) ? preferredWeapon : "pulse";
+
+      const withSelectedWeapon: PlayerProfile = {
+        ...normalized,
+        selectedWeapon: safeWeapon,
+      };
+      return recordEvent(withSelectedWeapon, "match_start", {
+        source: "menu",
+        hero: hero.name,
+        weapon: getWeapon(safeWeapon).name,
+      });
+    });
     if (!started) {
       return;
     }
 
-    const freshRound = resetRound(selectedHero);
+    const safeWeapon = started.unlockedWeapons.includes(started.selectedWeapon)
+      ? started.selectedWeapon
+      : "pulse";
+    const freshRound = resetRound(selectedHero, safeWeapon, started.metaUpgrades);
     roundRef.current = freshRound;
     closeUpgradeSelection();
 
-    setStatusText(`${hero.name} entered the arena. Build power and trigger hero skill with E.`);
+    setStatusText(
+      `${hero.name} entered the arena with ${getWeapon(safeWeapon).name}. Build power and trigger hero skill with E.`,
+    );
     setRoundSummary(null);
     setIsPaused(false);
     setLiveStats(toLiveStats(freshRound));
     setPhase("playing");
     phaseRef.current = "playing";
-  }, [closeUpgradeSelection, recordEvent, selectedHero, writeProfile]);
+  }, [closeUpgradeSelection, recordEvent, selectedHero, selectedWeapon, writeProfile]);
 
   const closeRewarded = useCallback(() => {
     if (adIntervalRef.current) {
@@ -1171,6 +1455,193 @@ export default function StickPartyGame() {
     setStatusText("Profile nickname updated.");
   }, [nicknameDraft, writeProfile]);
 
+  const selectWeaponLoadout = useCallback(
+    (weaponId: WeaponId) => {
+      const selected = writeProfile((current) => {
+        if (!current.unlockedWeapons.includes(weaponId)) {
+          return current;
+        }
+
+        return {
+          ...current,
+          selectedWeapon: weaponId,
+        };
+      });
+
+      if (!selected || !selected.unlockedWeapons.includes(weaponId)) {
+        setStatusText("Unlock this weapon before selecting it.");
+        return;
+      }
+
+      setSelectedWeapon(weaponId);
+      setStatusText(`Loadout selected: ${getWeapon(weaponId).name}.`);
+    },
+    [writeProfile],
+  );
+
+  const unlockWeapon = useCallback(
+    (weaponId: WeaponId) => {
+      const definition = getWeapon(weaponId);
+      if (definition.unlockCredits <= 0 && definition.unlockCrystals <= 0) {
+        selectWeaponLoadout(weaponId);
+        return;
+      }
+
+      let unlocked = false;
+      const updated = writeProfile((current) => {
+        if (current.unlockedWeapons.includes(weaponId)) {
+          return current;
+        }
+
+        if (current.credits < definition.unlockCredits || current.crystals < definition.unlockCrystals) {
+          return current;
+        }
+
+        unlocked = true;
+        let next: PlayerProfile = {
+          ...current,
+          credits: current.credits - definition.unlockCredits,
+          crystals: current.crystals - definition.unlockCrystals,
+          unlockedWeapons: [...current.unlockedWeapons, weaponId],
+          selectedWeapon: weaponId,
+        };
+
+        next = recordEvent(next, "weapon_unlocked", {
+          weapon: definition.name,
+          cost_credits: definition.unlockCredits,
+          cost_crystals: definition.unlockCrystals,
+        });
+        return next;
+      });
+
+      if (!updated) {
+        return;
+      }
+
+      if (updated.unlockedWeapons.includes(weaponId)) {
+        setSelectedWeapon(weaponId);
+      }
+
+      if (unlocked) {
+        setStatusText(`Unlocked ${definition.name}. New loadout ready.`);
+      } else {
+        setStatusText(`Need ${definition.unlockCredits} credits and ${definition.unlockCrystals} crystals.`);
+      }
+    },
+    [recordEvent, selectWeaponLoadout, writeProfile],
+  );
+
+  const purchaseMetaUpgrade = useCallback(
+    (upgradeId: keyof MetaUpgradeLevels) => {
+      const definition = META_UPGRADES.find((item) => item.id === upgradeId);
+      if (!definition) {
+        return;
+      }
+
+      let success = false;
+      let resultingLevel = 0;
+      const updated = writeProfile((current) => {
+        const level = current.metaUpgrades[upgradeId];
+        if (level >= definition.maxLevel) {
+          resultingLevel = level;
+          return current;
+        }
+
+        const cost = getMetaUpgradeCost(definition, level);
+        if (current.credits < cost.credits || current.crystals < cost.crystals) {
+          resultingLevel = level;
+          return current;
+        }
+
+        success = true;
+        resultingLevel = level + 1;
+        let next: PlayerProfile = {
+          ...current,
+          credits: current.credits - cost.credits,
+          crystals: current.crystals - cost.crystals,
+          metaUpgrades: {
+            ...current.metaUpgrades,
+            [upgradeId]: level + 1,
+          },
+        };
+        next = recordEvent(next, "meta_upgrade_purchased", {
+          upgrade: definition.title,
+          level: resultingLevel,
+          cost_credits: cost.credits,
+          cost_crystals: cost.crystals,
+        });
+        return next;
+      });
+
+      if (!updated) {
+        return;
+      }
+
+      if (success) {
+        setStatusText(`${definition.title} upgraded to level ${resultingLevel}.`);
+      } else if (resultingLevel >= definition.maxLevel) {
+        setStatusText(`${definition.title} is already maxed.`);
+      } else {
+        const cost = getMetaUpgradeCost(definition, resultingLevel);
+        setStatusText(`Need ${cost.credits} credits and ${cost.crystals} crystals for ${definition.title}.`);
+      }
+    },
+    [recordEvent, writeProfile],
+  );
+
+  const claimDailyMission = useCallback(
+    (missionId: string) => {
+      const mission = DAILY_MISSIONS.find((item) => item.id === missionId);
+      if (!mission) {
+        return;
+      }
+
+      let claimed = false;
+      writeProfile((current) => {
+        const normalized = refreshDailyCounters(current);
+        if (normalized.dailyMissionClaimed.includes(mission.id)) {
+          return normalized;
+        }
+
+        const progress = missionProgressValue(normalized.dailyMissionProgress, mission.metric);
+        if (progress < mission.goal) {
+          return normalized;
+        }
+
+        claimed = true;
+        let next: PlayerProfile = {
+          ...normalized,
+          credits: normalized.credits + mission.rewardCredits,
+          crystals: normalized.crystals + mission.rewardCrystals,
+          dailyMissionClaimed: [...normalized.dailyMissionClaimed, mission.id],
+        };
+        next = recordEvent(next, "mission_claimed", {
+          mission: mission.label,
+          reward_credits: mission.rewardCredits,
+          reward_crystals: mission.rewardCrystals,
+        });
+        return next;
+      });
+
+      if (claimed) {
+        setStatusText(
+          `${mission.label} claimed: +${mission.rewardCredits} credits, +${mission.rewardCrystals} crystals.`,
+        );
+      } else {
+        setStatusText("Mission is not complete yet.");
+      }
+    },
+    [recordEvent, writeProfile],
+  );
+
+  const dismissTutorial = useCallback(() => {
+    writeProfile((current) => ({
+      ...current,
+      tutorialSeen: true,
+    }));
+    setStatusText("Tutorial hidden. You can still start with Space.");
+  }, [writeProfile]);
+
   const chooseUpgrade = useCallback(
     (upgradeId: UpgradeId) => {
       if (!upgradeOpenRef.current || phaseRef.current !== "playing") {
@@ -1289,6 +1760,7 @@ export default function StickPartyGame() {
           ttl: 1.05,
           damage: round.build.shotDamage + 2,
           radius: 3.4,
+          pierce: 0,
         });
       }
       round.frenzyUntil = Math.max(round.frenzyUntil, round.elapsed + 3.5);
@@ -1334,6 +1806,11 @@ export default function StickPartyGame() {
       setProfile(saved);
       setRewardStatus(rewardedStatus(saved));
       setNicknameDraft(saved.nickname);
+      setSelectedWeapon(saved.selectedWeapon);
+      setLiveStats((current) => ({
+        ...current,
+        weaponName: getWeapon(saved.selectedWeapon).name,
+      }));
     }, 0);
 
     return () => {
@@ -1512,6 +1989,8 @@ export default function StickPartyGame() {
     const run = (time: number): void => {
       const delta = Math.min(0.05, (time - lastTick) / 1000);
       lastTick = time;
+      damageFlashRef.current = Math.max(0, damageFlashRef.current - delta * 1.9);
+      shakeRef.current = Math.max(0, shakeRef.current - delta * 26);
 
       const phaseNow = phaseRef.current;
       const round = roundRef.current;
@@ -1520,7 +1999,7 @@ export default function StickPartyGame() {
       if (simulating) {
         round.elapsed += delta;
         round.spawnClock += delta;
-        round.powerCharge = Math.min(100, round.powerCharge + delta * 3.6);
+        round.powerCharge = Math.min(100, round.powerCharge + delta * 3.6 * round.powerGainScale);
 
         round.score += delta * (9 + round.level * 1.6 + round.elapsed * 0.25);
 
@@ -1641,12 +2120,18 @@ export default function StickPartyGame() {
             if (round.build.shield > 0) {
               round.build.shield -= 1;
               round.invulnerableUntil = round.elapsed + 1;
+              damageFlashRef.current = Math.min(1, damageFlashRef.current + 0.65);
+              shakeRef.current = Math.min(14, shakeRef.current + 8.5);
+              setStatusText(`Hit taken. Shield left: ${round.build.shield}/${round.build.maxShield}.`);
               round.enemies.splice(enemyIndex, 1);
               continue;
             }
 
+            damageFlashRef.current = 1;
+            shakeRef.current = Math.min(20, shakeRef.current + 14);
             handleRoundEnd({ ...round, enemies: [...round.enemies] });
-            roundRef.current = resetRound(round.heroId);
+            const meta = profileRef.current?.metaUpgrades ?? DEFAULT_META_UPGRADES;
+            roundRef.current = resetRound(round.heroId, round.weaponId, meta);
             break;
           }
         }
@@ -1681,7 +2166,12 @@ export default function StickPartyGame() {
               round.enemies.splice(enemyIndex, 1);
             }
 
-            round.projectiles.splice(projectileIndex, 1);
+            if (projectile.pierce > 0) {
+              projectile.pierce -= 1;
+              projectile.damage = Math.max(1, projectile.damage - 1);
+            } else {
+              round.projectiles.splice(projectileIndex, 1);
+            }
             break;
           }
         }
@@ -1750,8 +2240,14 @@ export default function StickPartyGame() {
         }
       }
 
-      drawArenaBackground(context);
       const drawState = roundRef.current;
+      context.save();
+      if (phaseNow === "playing" && shakeRef.current > 0.05) {
+        const intensity = shakeRef.current;
+        context.translate(randomInRange(-intensity, intensity), randomInRange(-intensity, intensity));
+      }
+
+      drawArenaBackground(context);
 
       for (const orb of drawState.orbs) {
         drawOrb(context, orb);
@@ -1792,7 +2288,15 @@ export default function StickPartyGame() {
         pointerRef.current.active ? pointerRef.current.x - drawState.playerX : drawState.dashDirX,
       );
 
+      drawOffscreenIndicators(context, drawState);
+      context.restore();
       drawHud(context, phaseNow, drawState, isPaused, upgradeOpenRef.current);
+
+      if (damageFlashRef.current > 0.01) {
+        const alpha = Math.min(0.34, damageFlashRef.current * 0.28);
+        context.fillStyle = `rgba(255, 76, 76, ${alpha.toFixed(3)})`;
+        context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      }
 
       animationFrameRef.current = window.requestAnimationFrame(run);
     };
@@ -1828,7 +2332,23 @@ export default function StickPartyGame() {
   const dashReady = liveStats.dashLeft <= 0.01;
   const powerReady = liveStats.power >= 99.5;
   const selectedHeroDef = getHero(selectedHero);
+  const selectedWeaponDef = getWeapon(selectedWeapon);
   const activeHeroDef = getHero(liveStats.heroId);
+  const unlockedWeapons = profile?.unlockedWeapons ?? ["pulse"];
+  const missionProgress = profile?.dailyMissionProgress ?? getDefaultMissionProgress();
+  const missionClaimed = profile?.dailyMissionClaimed ?? [];
+  const dailyMissionRows = DAILY_MISSIONS.map((mission) => {
+    const value = missionProgressValue(missionProgress, mission.metric);
+    const completed = value >= mission.goal;
+    const claimed = missionClaimed.includes(mission.id);
+    return {
+      mission,
+      value,
+      completed,
+      claimed,
+    };
+  });
+  const leaderboardRows = profile?.leaderboard ?? [];
 
   return (
     <section className="game-screen">
@@ -1853,10 +2373,11 @@ export default function StickPartyGame() {
 
       <div className="game-toolbar">
         <p className="muted">
-          Hero system live: unique power per character, elite waves, and bounty contracts for burst rewards.
+          Hero + weapon system live: unique powers, elite waves, bounty contracts, daily missions, and local leaderboard.
         </p>
         <div className="toolbar-pills" aria-label="Live run telemetry">
           <span className="status-pill">{liveStats.heroName}</span>
+          <span className="status-pill weapon-pill">{liveStats.weaponName}</span>
           <span className="status-pill">Lvl {liveStats.level}</span>
           <span className="status-pill">Combo x{liveStats.combo}</span>
           <span className="status-pill">Kills {liveStats.kills}</span>
@@ -1910,8 +2431,21 @@ export default function StickPartyGame() {
           <div className="overlay-card">
             <h2>Stick Arena Party</h2>
             <p>
-              Pick a hero with a unique style, then survive evolving waves with contracts, elites, and build upgrades.
+              Pick a hero and loadout, then survive evolving waves with elite bursts, contracts, and unlock-based
+              progression.
             </p>
+            {!(profile?.tutorialSeen ?? false) ? (
+              <div className="tutorial-box">
+                <strong>Quick Tutorial</strong>
+                <p>
+                  Move with <code>WASD</code> or drag on mobile. Dash with <code>Shift</code>, trigger hero power with
+                  <code> E</code>, and survive as long as possible.
+                </p>
+                <button type="button" className="ghost-btn" onClick={dismissTutorial}>
+                  Got It
+                </button>
+              </div>
+            ) : null}
             <div className="hero-picker">
               {HERO_POOL.map((hero) => (
                 <button
@@ -1936,28 +2470,61 @@ export default function StickPartyGame() {
                 </button>
               ))}
             </div>
+            <div className="weapon-picker">
+              {WEAPON_POOL.map((weapon) => {
+                const unlocked = unlockedWeapons.includes(weapon.id);
+                const active = selectedWeapon === weapon.id;
+                return (
+                  <button
+                    key={weapon.id}
+                    type="button"
+                    className={`weapon-card${active ? " active" : ""}${!unlocked ? " locked" : ""}`}
+                    onClick={() => {
+                      if (unlocked) {
+                        selectWeaponLoadout(weapon.id);
+                      } else {
+                        unlockWeapon(weapon.id);
+                      }
+                    }}
+                  >
+                    <strong>{weapon.name}</strong>
+                    <small>{weapon.description}</small>
+                    {unlocked ? (
+                      <span>{active ? "Selected" : "Tap to select"}</span>
+                    ) : (
+                      <span>
+                        Unlock: {formatInt(weapon.unlockCredits)} credits + {formatInt(weapon.unlockCrystals)} crystals
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
             <ul>
-              <li>Fight runner, zigzag, brute, and elite enemies.</li>
-              <li>Collect XP orbs, clear bounty contracts, and level your build.</li>
-              <li>Use dash + hero power to survive late-wave pressure.</li>
+              <li>Fight runner, zigzag, brute, and elite enemies with off-screen danger indicators.</li>
+              <li>Collect XP orbs, clear bounty contracts, and level up during runs.</li>
+              <li>Use dash + hero power + unlocked weapons to survive late-wave pressure.</li>
             </ul>
             <div className="inline-actions">
               <button type="button" className="primary-btn" onClick={startMatch}>
-                Start Match as {selectedHeroDef.name}
+                Start Match: {selectedHeroDef.name} / {selectedWeaponDef.name}
               </button>
               <button
                 type="button"
                 className="ghost-btn"
                 onClick={() =>
                   setStatusText(
-                    "Tip: Finish contracts fast for score spikes and save hero power for elite waves.",
+                    "Tip: Claim daily missions, then invest in meta upgrades for faster power and tougher runs.",
                   )
                 }
               >
                 Strategy Tip
               </button>
             </div>
-            <small>Selected: {selectedHeroDef.name} ({selectedHeroDef.role}) | Quick start: Space</small>
+            <small>
+              Selected: {selectedHeroDef.name} ({selectedHeroDef.role}) with {selectedWeaponDef.name} | Quick start:
+              Space
+            </small>
           </div>
         ) : null}
 
@@ -2014,6 +2581,9 @@ export default function StickPartyGame() {
               </p>
               <p>
                 Threats spawned <strong>{formatInt(roundSummary.spawnedEnemies)}</strong>
+              </p>
+              <p>
+                Loadout <strong>{liveStats.heroName} / {liveStats.weaponName}</strong>
               </p>
               <p>
                 Match reward <strong>+{formatInt(roundSummary.rewardCredits)} credits</strong>
@@ -2125,6 +2695,33 @@ export default function StickPartyGame() {
           <p>
             Rewarded lifetime claims: <strong>{formatInt(profile?.rewardedLifetimeClaims ?? 0)}</strong>
           </p>
+          <p>
+            Unlocked weapons: <strong>{formatInt((profile?.unlockedWeapons ?? ["pulse"]).length)}</strong>
+          </p>
+          <p>
+            Loadout weapon: <strong>{getWeapon(profile?.selectedWeapon ?? "pulse").name}</strong>
+          </p>
+          <div className="meta-upgrade-grid">
+            {META_UPGRADES.map((upgrade) => {
+              const level = profile?.metaUpgrades[upgrade.id] ?? 0;
+              const maxed = level >= upgrade.maxLevel;
+              const cost = getMetaUpgradeCost(upgrade, level);
+              return (
+                <button
+                  key={upgrade.id}
+                  type="button"
+                  className="meta-upgrade-btn"
+                  onClick={() => purchaseMetaUpgrade(upgrade.id)}
+                  disabled={maxed}
+                >
+                  <strong>{upgrade.title}</strong>
+                  <small>{upgrade.description}</small>
+                  <span>Lvl {level}/{upgrade.maxLevel}</span>
+                  <span>{maxed ? "Maxed" : `Cost: ${cost.credits} c + ${cost.crystals} x`}</span>
+                </button>
+              );
+            })}
+          </div>
           <p className="muted">
             Guest profile is stored in browser local storage. Cloud auth/save can be connected later without changing
             gameplay flow.
@@ -2135,6 +2732,7 @@ export default function StickPartyGame() {
           <h3>Run Intel</h3>
           <p>{statusText || "Ready."}</p>
           <p className="muted">Active hero: {activeHeroDef.name}</p>
+          <p className="muted">Active weapon: {liveStats.weaponName}</p>
           <p className="muted">
             XP progress: {liveStats.xp}/{liveStats.xpToNext}
           </p>
@@ -2168,6 +2766,49 @@ export default function StickPartyGame() {
               </div>
             ))}
             {(profile?.eventLog ?? []).length === 0 ? <p className="muted">No local analytics events yet.</p> : null}
+          </div>
+        </section>
+
+        <section className="meta-card">
+          <h3>Daily Missions</h3>
+          <p className="muted">Resets at local day change. Claim rewards manually after completion.</p>
+          <div className="mission-list">
+            {dailyMissionRows.map(({ mission, value, completed, claimed }) => (
+              <div key={mission.id} className={`mission-row${completed ? " completed" : ""}${claimed ? " claimed" : ""}`}>
+                <div>
+                  <strong>{mission.label}</strong>
+                  <p>{mission.description}</p>
+                  <small>
+                    Progress: {formatInt(Math.min(value, mission.goal))}/{formatInt(mission.goal)} | Reward: +{mission.rewardCredits}
+                    {" "}credits, +{mission.rewardCrystals} crystals
+                  </small>
+                </div>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => claimDailyMission(mission.id)}
+                  disabled={!completed || claimed}
+                >
+                  {claimed ? "Claimed" : completed ? "Claim" : "In Progress"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="meta-card">
+          <h3>Local Leaderboard</h3>
+          <p className="muted">Top runs on this device.</p>
+          <div className="leaderboard-list">
+            {leaderboardRows.slice(0, 10).map((entry, index) => (
+              <div key={`${entry.at}-${entry.score}-${index}`} className="leaderboard-row">
+                <span>#{index + 1}</span>
+                <strong>{formatInt(entry.score)}</strong>
+                <small>{entry.hero} / {getWeapon(entry.weapon).name}</small>
+                <time>{formatSeconds(entry.survivalSeconds)}</time>
+              </div>
+            ))}
+            {leaderboardRows.length === 0 ? <p className="muted">No runs yet. Start your first match.</p> : null}
           </div>
         </section>
       </div>
