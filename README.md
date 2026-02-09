@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Stick Arena Party (Web)
 
-## Getting Started
+Deploy-ready Next.js game project with an original stick-figure survival loop, in-game currency economy, and optional rewarded-bonus flow.
 
-First, run the development server:
+## Current MVP
+
+- Original arena survival gameplay in `src/components/game/stick-party-game.tsx`
+- Routes: `/`, `/play`, `/about`, `/updates`, `/privacy`, `/terms`
+- Persistent local profile with credits, crystals, score history, and event log
+- Reward model:
+  - Match rewards after every run
+  - Optional rewarded bonus at Game Over only
+  - Reward granted only on completion
+  - Cooldown + daily cap for anti-abuse basics
+  - Reward odds shown before rewarded attempt
+- Deploy readiness:
+  - `public/ads.txt`
+  - `src/app/robots.ts`
+  - `src/app/sitemap.ts`
+  - `public/privacy.html` + `public/terms.html`
+  - `.env.example`
+
+## Run locally
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Build check
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run lint
+npm run build
+```
 
-## Learn More
+## Environment variables
 
-To learn more about Next.js, take a look at the following resources:
+Copy `.env.example` to `.env.local` and fill values when available.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `NEXT_PUBLIC_SITE_URL`
+- `NEXT_PUBLIC_GA4_MEASUREMENT_ID`
+- Firebase keys (`NEXT_PUBLIC_FIREBASE_*`)
+- Ad Manager placeholders (`NEXT_PUBLIC_AD_MANAGER_*`)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Monetization status
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Rewarded flow is implemented as a safe local simulation layer for now. Ad Manager rewarded GPT events can be wired into the same completion-only logic next, without changing the economy rules.
