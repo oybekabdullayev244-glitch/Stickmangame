@@ -34,7 +34,7 @@ export function SiteFooter() {
       <div className="site-footer-inner">
         <p>Stick Arena Party. Browser-first action game with optional rewarded bonuses.</p>
         <p>
-          Contact placeholder: <a href="mailto:owner@example.com">owner@example.com</a>
+          Contact: <a href="mailto:oybekabdullayev244@gmail.com">oybekabdullayev244@gmail.com</a>
         </p>
       </div>
     </footer>

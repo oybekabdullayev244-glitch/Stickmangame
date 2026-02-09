@@ -35,7 +35,7 @@ export default function PrivacyPage() {
 
         <h2>5. Contact</h2>
         <p>
-          Replace this placeholder before public launch: <a href="mailto:owner@example.com">owner@example.com</a>
+          Contact: <a href="mailto:oybekabdullayev244@gmail.com">oybekabdullayev244@gmail.com</a>
         </p>
       </article>
     </section>

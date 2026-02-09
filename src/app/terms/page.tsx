@@ -38,7 +38,7 @@ export default function TermsPage() {
 
         <h2>6. Contact</h2>
         <p>
-          Replace this placeholder before launch: <a href="mailto:owner@example.com">owner@example.com</a>
+          Contact: <a href="mailto:oybekabdullayev244@gmail.com">oybekabdullayev244@gmail.com</a>
         </p>
       </article>
     </section>
